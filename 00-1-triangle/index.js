@@ -60,6 +60,19 @@ async function main() {
     }],
   };
 
+  const observer = new ResizeObserver((entries) => {
+    for (let entry of entries) {
+      const canvas = entry.target;
+      const width = entry.contentBoxSize[0].inlineSize;
+      const height = entry.contentBoxSize[0].blockSize;
+      canvas.width = Math.max(1, Math.min(width, device.limits.maxTextureDimension2D));
+      canvas.height = Math.max(1, Math.min(height, device.limits.maxTextureDimension2D));
+      render();
+    }
+  });
+
+  observer.observe(canvas);
+
   function render() {
     renderPassDescriptor.colorAttachments[0].view = context.getCurrentTexture().createView();
     const encoder = device.createCommandEncoder({ label: 'our encoder' });
@@ -71,8 +84,6 @@ async function main() {
     const commandBuffer = encoder.finish();
     device.queue.submit([commandBuffer]);
   }
-
-  render();
 }
 
 function fail(msg) {
