@@ -14,25 +14,41 @@ async function main() {
     format: presentationFormat,
   });
 
-  const module = device.createShaderModule({
-    label: 'our hardcoded red triangle shaders',
+  const vsModule = device.createShaderModule({
+    label: 'hardcoded triangle',
     code: `
-      @vertex 
-      fn vs(
+      struct OurVertexShaderOutput {
+        @builtin(position) position: vec4f,
+      }
+      
+      @vertex fn vs(
         @builtin(vertex_index) vertexIndex: u32
-      ) -> @builtin(position) vec4f {
+      ) -> OurVertexShaderOutput {
         let pos = array(
           vec2f(0.0, 0.5),
           vec2f(-0.5,-0.5),
           vec2f(0.5, -0.5),
         );
         
-        return vec4f(pos[vertexIndex], 0, 1);
+        var vsOutput: OurVertexShaderOutput;
+        vsOutput.position = vec4f(pos[vertexIndex], 0, 1);
+        return vsOutput;
       }
-      
+    `
+  });
+
+  const fsModule = device.createShaderModule({
+    label: 'checkerboard',
+    code: `
       @fragment
-      fn fs() -> @location(0) vec4f {
-        return vec4f(1, 0, 0, 1);
+      fn fs(@builtin(position) pixelPosition: vec4f) -> @location(0) vec4f {
+        let red = vec4f(1, 0, 0, 1);
+        let cyan = vec4f(0, 1, 1, 1);
+        
+        let grid = vec2u(pixelPosition.xy) / 8;
+        let checker = (grid.x + grid.y) % 2 == 1;
+        
+        return select(red, cyan, checker);
       }
     `
   });
@@ -41,11 +57,11 @@ async function main() {
     label: 'our hardcoded red triangle pipeline',
     layout: 'auto',
     vertex: {
-      module,
+      module: vsModule,
       entryPoint: 'vs',
     },
     fragment: {
-      module,
+      module: fsModule,
       entryPoint: 'fs',
       targets: [{ format: presentationFormat }],
     },
