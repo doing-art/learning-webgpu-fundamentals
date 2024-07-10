@@ -3,6 +3,7 @@ async function main() {
     addressModeU: 'repeat',
     addressModeV: 'repeat',
     magFilter: 'linear',
+    minFilter: 'linear',
   };
 
   const addressOptions = ['repeat', 'clamp-to-edge'];
@@ -14,6 +15,7 @@ async function main() {
   gui.add(settings, 'addressModeU', addressOptions);
   gui.add(settings, 'addressModeV', addressOptions);
   gui.add(settings, 'magFilter', filterOptions);
+  gui.add(settings, 'minFilter', filterOptions);
 
   /////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -40,6 +42,13 @@ async function main() {
         @builtin(position) position: vec4f,
         @location(0) texcoord: vec2f,
       };
+      
+      struct Uniforms {
+        scale: vec2f,
+        offset: vec2f,
+      };
+       
+      @group(0) @binding(2) var<uniform> uni: Uniforms;
 
       @vertex fn vs(
         @builtin(vertex_index) vertexIndex : u32
@@ -58,7 +67,7 @@ async function main() {
 
         var vsOutput: OurVertexShaderOutput;
         let xy = pos[vertexIndex];
-        vsOutput.position = vec4f(xy, 0.0, 1.0);
+        vsOutput.position = vec4f(xy * uni.scale + uni.offset, 0.0, 1.0);
         vsOutput.texcoord = vec2f(xy.x, 1.0 - xy.y);
         return vsOutput;
       }
@@ -112,12 +121,30 @@ async function main() {
     },
   });
 
+  // create a buffer for the uniform values
+  const uniformBufferSize =
+    2 * 4 + // scale is 2 32bit floats (4bytes each)
+    2 * 4;  // offset is 2 32bit floats (4bytes each)
+  const uniformBuffer = device.createBuffer({
+    label: 'uniforms for quad',
+    size: uniformBufferSize,
+    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+  });
+
+  // create a typedarray to hold the values for the uniforms in JavaScript
+  const uniformValues = new Float32Array(uniformBufferSize / 4);
+
+  // offsets to the various uniform values in float32 indices
+  const kScaleOffset = 0;
+  const kOffsetOffset = 2;
+
   const bindGroups = [];
-  for (let i = 0; i < 8; ++i) {
+  for (let i = 0; i < 16; ++i) {
     const sampler = device.createSampler({
       addressModeU: (i & 1) ? 'repeat' : 'clamp-to-edge',
       addressModeV: (i & 2) ? 'repeat' : 'clamp-to-edge',
       magFilter: (i & 4) ? 'linear' : 'nearest',
+      minFilter: (i & 8) ? 'linear' : 'nearest',
     });
 
     const bindGroup = device.createBindGroup({
@@ -125,6 +152,7 @@ async function main() {
       entries: [
         { binding: 0, resource: sampler },
         { binding: 1, resource: texture.createView() },
+        { binding: 2, resource: { buffer: uniformBuffer }},
       ],
     });
     bindGroups.push(bindGroup);
@@ -142,11 +170,26 @@ async function main() {
     ],
   };
 
-  function render() {
+  function render(time) {
+    time *= 0.001;
     const ndx = (settings.addressModeU === 'repeat' ? 1 : 0) +
       (settings.addressModeV === 'repeat' ? 2 : 0) +
-      (settings.magFilter === 'linear' ? 4 : 0);
+      (settings.magFilter === 'linear' ? 4 : 0) +
+      (settings.minFilter === 'linear' ? 8 : 0);
     const bindGroup = bindGroups[ndx];
+
+    // compute a scale that will draw our 0 to 1 clip space quad
+    // 2x2 pixels in the canvas.
+    const scaleX = 4 / canvas.width;
+    const scaleY = 4 / canvas.height;
+    console.log(canvas.width, canvas.height, scaleX, scaleY)
+
+    uniformValues.set([scaleX, scaleY], kScaleOffset); // set the scale
+    uniformValues.set([Math.sin(time * 0.25) * 0.8, -0.8], kOffsetOffset); // set the offset
+
+    // copy the values from JavaScript to the GPU
+    device.queue.writeBuffer(uniformBuffer, 0, uniformValues);
+
     // Get the current texture from the canvas context and
     // set it as the texture to render to.
     renderPassDescriptor.colorAttachments[0].view =
@@ -163,17 +206,19 @@ async function main() {
 
     const commandBuffer = encoder.finish();
     device.queue.submit([commandBuffer]);
+
+    requestAnimationFrame(render);
   }
+  requestAnimationFrame(render);
 
   const observer = new ResizeObserver(entries => {
     for (const entry of entries) {
       const canvas = entry.target;
-      const width = entry.contentBoxSize[0].inlineSize;
-      const height = entry.contentBoxSize[0].blockSize;
+      const width = entry.contentBoxSize[0].inlineSize / 64 | 0;
+      const height = entry.contentBoxSize[0].blockSize / 64 | 0;
+      // console.log(entry.contentBoxSize[0].inlineSize, entry.contentBoxSize[0].blockSize, width, height, device.limits.maxTextureDimension2D);
       canvas.width = Math.max(1, Math.min(width, device.limits.maxTextureDimension2D));
       canvas.height = Math.max(1, Math.min(height, device.limits.maxTextureDimension2D));
-      // re-render
-      render();
     }
   });
   observer.observe(canvas);
